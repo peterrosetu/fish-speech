@@ -15,13 +15,13 @@
 从我们的 huggingface 仓库下载所需的 `vqgan` 和 `llama` 模型。
 
 ```bash
-huggingface-cli download fishaudio/fish-speech-1.2 --local-dir checkpoints/fish-speech-1.2
+huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/fish-speech-1.2-sft
 ```
 
 对于中国大陆用户，可使用 mirror 下载。
 
 ```bash
-HF_ENDPOINT=https://hf-mirror.com huggingface-cli download fishaudio/fish-speech-1.2 --local-dir checkpoints/fish-speech-1.2
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/fish-speech-1.2-sft
 ```
 
 ### 1. 从语音生成 prompt:
@@ -32,7 +32,7 @@ HF_ENDPOINT=https://hf-mirror.com huggingface-cli download fishaudio/fish-speech
 ```bash
 python tools/vqgan/inference.py \
     -i "paimon.wav" \
-    --checkpoint-path "checkpoints/fish-speech-1.2/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
+    --checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
 ```
 
 你应该能得到一个 `fake.npy` 文件.
@@ -44,7 +44,7 @@ python tools/llama/generate.py \
     --text "要转换的文本" \
     --prompt-text "你的参考文本" \
     --prompt-tokens "fake.npy" \
-    --checkpoint-path "checkpoints/fish-speech-1.2" \
+    --checkpoint-path "checkpoints/fish-speech-1.2-sft" \
     --num-samples 2 \
     --compile
 ```
@@ -58,17 +58,14 @@ python tools/llama/generate.py \
 !!! info
     对于不支持 bf16 的 GPU, 你可能需要使用 `--half` 参数.
 
-<<<<<<< HEAD
-=======
 ### 3. 从语义 token 生成人声:
->>>>>>> upstream/main
 
 #### VQGAN 解码
 
 ```bash
 python tools/vqgan/inference.py \
     -i "codes_0.npy" \
-    --checkpoint-path "checkpoints/fish-speech-1.2/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
+    --checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
 ```
 
 ## HTTP API 推理
@@ -78,14 +75,15 @@ python tools/vqgan/inference.py \
 ```bash
 python -m tools.api \
     --listen 0.0.0.0:8080 \
-    --llama-checkpoint-path "checkpoints/fish-speech-1.2" \
-    --decoder-checkpoint-path "checkpoints/fish-speech-1.2/firefly-gan-vq-fsq-4x1024-42hz-generator.pth" \
+    --llama-checkpoint-path "checkpoints/fish-speech-1.2-sft" \
+    --decoder-checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth" \
     --decoder-config-name firefly_gan_vq
+```
+如果你想要加速推理，可以加上`--compile`参数。
 
-如果你想要加速推理，可以加上--compile参数。
-
-# 推荐中国大陆用户运行以下命令来启动 HTTP 服务:
-HF_ENDPOINT=https://hf-mirror.com python -m ...
+推荐中国大陆用户运行以下命令来启动 HTTP 服务:
+```bash
+HF_ENDPOINT=https://hf-mirror.com python -m ...(同上)
 ```
 
 随后, 你可以在 `http://127.0.0.1:8080/` 中查看并测试 API.
@@ -155,8 +153,8 @@ python -m tools.post_api \
 
 ```bash
 python -m tools.webui \
-    --llama-checkpoint-path "checkpoints/fish-speech-1.2" \
-    --decoder-checkpoint-path "checkpoints/fish-speech-1.2/firefly-gan-vq-fsq-4x1024-42hz-generator.pth" \
+    --llama-checkpoint-path "checkpoints/fish-speech-1.2-sft" \
+    --decoder-checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth" \
     --decoder-config-name firefly_gan_vq
 ```
 
