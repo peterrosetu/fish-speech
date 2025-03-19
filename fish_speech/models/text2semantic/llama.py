@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import math
 from collections import OrderedDict
@@ -15,7 +16,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.utils.checkpoint import checkpoint
 from transformers import AutoTokenizer
 
-from fish_speech.conversation import SEMANTIC_TOKEN
+from fish_speech.tokenizer import SEMANTIC_TOKENS, FishTokenizer
 from fish_speech.utils import RankedLogger
 
 from .lora import LoraConfig, setup_lora
@@ -56,6 +57,11 @@ class BaseModelArgs:
 
     # Initialize the model
     initializer_range: float = 0.02
+
+    # Dummy vars
+    is_reward_model: bool = False
+    share_codebook_embeddings: bool = True
+    scale_codebook_embeddings: bool = False
 
     def __post_init__(self):
         if self.n_local_heads == -1:
@@ -100,6 +106,28 @@ class NaiveModelArgs(BaseModelArgs):
 class DualARModelArgs(BaseModelArgs):
     model_type: str = "dual_ar"
     n_fast_layer: int = 4
+    fast_dim: int | None = None
+    fast_n_head: int | None = None
+    fast_n_local_heads: int | None = None
+    fast_head_dim: int | None = None
+    fast_intermediate_size: int | None = None
+    fast_attention_qkv_bias: bool | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.fast_dim = self.fast_dim or self.dim
+        self.fast_n_head = self.fast_n_head or self.n_head
+        self.fast_n_local_heads = self.fast_n_local_heads or self.n_local_heads
+        self.fast_head_dim = self.fast_head_dim or self.head_dim
+        self.fast_intermediate_size = (
+            self.fast_intermediate_size or self.intermediate_size
+        )
+        self.fast_attention_qkv_bias = (
+            self.fast_attention_qkv_bias
+            if self.fast_attention_qkv_bias is not None
+            else self.attention_qkv_bias
+        )
 
 
 class KVCache(nn.Module):
@@ -137,13 +165,17 @@ class BaseTransformerForwardResult:
 
 class BaseTransformer(nn.Module):
     def __init__(
-        self, config: BaseModelArgs, tokenizer: AutoTokenizer, init_weights: bool = True
+        self,
+        config: BaseModelArgs,
+        tokenizer: FishTokenizer,
+        init_weights: bool = True,
     ) -> None:
         super().__init__()
         self.config = config
         self.tokenizer = tokenizer
-
-        self.semantic_token_id = tokenizer.convert_tokens_to_ids(SEMANTIC_TOKEN)
+        self.semantic_token_ids = [
+            tokenizer.get_token_id(SEMANTIC_TOKEN) for SEMANTIC_TOKEN in SEMANTIC_TOKENS
+        ]
 
         # Slow transformer
         self.embeddings = nn.Embedding(
@@ -214,15 +246,24 @@ class BaseTransformer(nn.Module):
                 dtype=dtype,
             )
 
-    def embed(self, x: Tensor) -> Tensor:
-        vocab_embeds = [self.embeddings(x[:, 0])]
-        for i in range(self.config.num_codebooks):
-            emb = self.codebook_embeddings(x[:, i + 1] + i * self.config.codebook_size)
-            emb[x[:, 0] != self.semantic_token_id] = 0
-            vocab_embeds.append(emb)
+    def embed(self, inp: Tensor, share_codebook_embeddings=True) -> Tensor:
+        embeds = []
+        semantic_token_ids_tensor = torch.tensor(
+            self.semantic_token_ids, device=inp.device, dtype=inp.dtype
+        )
 
-        x = torch.stack(vocab_embeds, dim=3)
-        x = x.sum(dim=3)
+        for i in range(self.config.num_codebooks):
+            if share_codebook_embeddings:
+                emb = self.codebook_embeddings(
+                    inp[:, i + 1] + i * self.config.codebook_size
+                )
+            else:
+                emb = self.codebook_embeddings(inp[:, i + 1])
+            embeds.append(emb)
+
+        vq_embeds_sum = torch.stack(embeds, dim=1).sum(dim=1)
+        vq_embeds_sum[~torch.isin(inp[:, 0], semantic_token_ids_tensor)] = 0
+        x = self.embeddings(inp[:, 0]) + vq_embeds_sum
 
         return x
 
@@ -243,8 +284,14 @@ class BaseTransformer(nn.Module):
         # To maintain consistency, key_padding_mask use TRUE to mask out
         mask = None
         if key_padding_mask is not None:
-            mask = self.causal_mask[None, None, :seq_len, :seq_len]  # (B, N, Q, K)
-            mask = mask & key_padding_mask[:, None, None, :].logical_not()
+            causal = self.causal_mask[:seq_len, :seq_len]
+            causal = rearrange(causal, "q k -> 1 1 q k")
+
+            atten_mask = rearrange(key_padding_mask, "b s -> b 1 1 s")
+            atten_mask = atten_mask.logical_not()
+            mask = causal & atten_mask
+
+        # return freqs_cis, mask
 
         for layer in self.layers:
             if self.config.use_gradient_checkpointing and self.training:
@@ -267,20 +314,21 @@ class BaseTransformer(nn.Module):
 
     def forward_generate(
         self,
-        x: Tensor,
+        inp: Tensor,
         input_pos: Optional[Tensor] = None,
         return_all: bool = False,
     ) -> BaseTransformerForwardResult:
-        # This is used for generation, optimized for torch compile
-        assert (
-            self.max_seq_len != -1 and self.max_batch_size != -1
-        ), "Please call setup_caches before forward_generate"
+        x = self.embed(
+            inp, share_codebook_embeddings=self.config.share_codebook_embeddings
+        )
 
-        x = self.embed(x)
+        if input_pos is None:
+            input_pos = torch.arange(inp.shape[-1], device=x.device)
+            max_seq_len = inp.shape[-1]
+        else:
+            max_seq_len = self.max_seq_len
 
-        mask = self.causal_mask[
-            None, None, input_pos, : self.max_seq_len
-        ]  # (B, N, Q, K)
+        mask = self.causal_mask[None, None, input_pos, :max_seq_len]  # (B, N, Q, K)
         freqs_cis = self.freqs_cis[input_pos]
 
         for layer in self.layers:
@@ -293,7 +341,9 @@ class BaseTransformer(nn.Module):
         # We got slow_out here
         slow_out = self.norm(x)
 
-        if self.config.tie_word_embeddings:
+        if self.config.is_reward_model:
+            token_logits = self.score_output(slow_out)
+        elif self.config.tie_word_embeddings:
             token_logits = F.linear(slow_out, self.embeddings.weight)
         else:
             token_logits = self.output(slow_out)
@@ -321,6 +371,7 @@ class BaseTransformer(nn.Module):
         max_length: int | None = None,
         lora_config: LoraConfig | None = None,
         rope_base: int | None = None,
+        is_agent: bool = False,
     ) -> "BaseTransformer":
         config = BaseModelArgs.from_pretrained(str(path))
         if max_length is not None:
@@ -339,7 +390,9 @@ class BaseTransformer(nn.Module):
             case _:
                 raise ValueError(f"Unknown model type: {config.model_type}")
 
-        tokenizer = AutoTokenizer.from_pretrained(str(path))
+        tokenizer_path = str(path) + "/tokenizer.tiktoken"
+        tokenizer = FishTokenizer(tokenizer_path)
+
         log.info(f"Loading model from {path}, config: {config}")
         model = model_cls(config, tokenizer=tokenizer)
 
@@ -369,7 +422,10 @@ class BaseTransformer(nn.Module):
                 model = simple_quantizer.convert_for_runtime()
 
             weights = torch.load(
-                Path(path) / "model.pth", map_location="cpu", mmap=True
+                Path(path) / "model.pth",
+                map_location="cpu",
+                mmap=True,
+                weights_only=True,
             )
 
             if "state_dict" in weights:
@@ -422,7 +478,7 @@ class BaseTransformer(nn.Module):
 
 
 class NaiveTransformer(BaseTransformer):
-    def __init__(self, config: NaiveModelArgs, tokenizer: AutoTokenizer) -> None:
+    def __init__(self, config: NaiveModelArgs, tokenizer: FishTokenizer) -> None:
         super().__init__(config, init_weights=False, tokenizer=tokenizer)
 
         self.codebook_norm = RMSNorm(config.dim, eps=config.norm_eps)
@@ -468,23 +524,49 @@ class NaiveTransformer(BaseTransformer):
 
 
 class DualARTransformer(BaseTransformer):
-    def __init__(self, config: NaiveModelArgs, tokenizer: AutoTokenizer) -> None:
+    def __init__(self, config: NaiveModelArgs, tokenizer: FishTokenizer) -> None:
         super().__init__(config, init_weights=False, tokenizer=tokenizer)
 
+        # Project to fast dim if needed
+        if config.fast_dim is not None and config.fast_dim != config.dim:
+            self.fast_project_in = nn.Linear(config.dim, config.fast_dim)
+        else:
+            self.fast_project_in = nn.Identity()
+
         # Fast transformer
-        self.fast_embeddings = nn.Embedding(config.codebook_size, config.dim)
+        self.fast_embeddings = nn.Embedding(config.codebook_size, config.fast_dim)
 
         # The equivalent bs is so large that sdpa doesn't work
-        self.fast_layers = nn.ModuleList(
-            TransformerBlock(config, use_sdpa=False) for _ in range(config.n_fast_layer)
+        override_config = dataclasses.replace(
+            config,
+            dim=config.fast_dim,
+            n_head=config.fast_n_head,
+            n_local_heads=config.fast_n_local_heads,
+            head_dim=config.fast_head_dim,
+            intermediate_size=config.fast_intermediate_size,
+            attention_qkv_bias=config.fast_attention_qkv_bias,
         )
-        self.fast_norm = RMSNorm(config.dim, eps=config.norm_eps)
+
+        self.fast_layers = nn.ModuleList(
+            TransformerBlock(override_config, use_sdpa=False)
+            for _ in range(config.n_fast_layer)
+        )
+        self.fast_norm = RMSNorm(config.fast_dim, eps=config.norm_eps)
         self.fast_output = nn.Linear(
-            config.dim,
+            config.fast_dim,
             config.codebook_size,
             bias=False,
         )
 
+        self.register_buffer(
+            "fast_freqs_cis",
+            precompute_freqs_cis(
+                config.num_codebooks,
+                config.fast_dim // config.fast_n_head,
+                config.rope_base,
+            ),
+            persistent=False,
+        )
         self.apply(self._init_weights)
 
     def setup_caches(
@@ -492,7 +574,7 @@ class DualARTransformer(BaseTransformer):
     ):
         super().setup_caches(max_batch_size, max_seq_len, dtype)
 
-        head_dim = self.config.dim // self.config.n_head
+        head_dim = self.config.fast_dim // self.config.fast_n_head
 
         # Fast transformer
         # The max seq len here is the number of codebooks
@@ -500,7 +582,7 @@ class DualARTransformer(BaseTransformer):
             b.attention.kv_cache = KVCache(
                 max_batch_size,
                 self.config.num_codebooks,
-                self.config.n_local_heads,
+                self.config.fast_n_local_heads,
                 head_dim,
                 dtype=dtype,
             )
@@ -513,13 +595,13 @@ class DualARTransformer(BaseTransformer):
         parent_result = super().forward(inp, key_padding_mask)
         token_logits = parent_result.logits
         x = parent_result.hidden_states
+        x = self.fast_project_in(x)
 
         # Fast transformer
         fast_seq_len = self.config.num_codebooks
         fast_mask = self.causal_mask[
             None, None, :fast_seq_len, :fast_seq_len
         ]  # (B, N, Q, K)
-        fast_freqs_cis = self.freqs_cis[:fast_seq_len]
 
         # Drop the last token and rotate left
         codebooks = inp[:, 1:-1, 1:]
@@ -542,9 +624,11 @@ class DualARTransformer(BaseTransformer):
 
         for layer in self.fast_layers:
             if self.config.use_gradient_checkpointing and self.training:
-                x = checkpoint(layer, x, fast_freqs_cis, fast_mask, use_reentrant=True)
+                x = checkpoint(
+                    layer, x, self.fast_freqs_cis, fast_mask, use_reentrant=True
+                )
             else:
-                x = layer(x, fast_freqs_cis, fast_mask)
+                x = layer(x, self.fast_freqs_cis, fast_mask)
 
         # unflatten the batch and num_codebooks
         fast_out = self.fast_norm(x)
@@ -584,7 +668,7 @@ class DualARTransformer(BaseTransformer):
         fast_mask = self.causal_mask[
             None, None, input_pos, : self.config.num_codebooks
         ]  # (B, N, Q, K)
-        fast_freqs_cis = self.freqs_cis[input_pos]
+        fast_freqs_cis = self.fast_freqs_cis[input_pos]
 
         for layer in self.fast_layers:
             x = layer(x, fast_freqs_cis, fast_mask, input_pos=input_pos)
@@ -594,6 +678,16 @@ class DualARTransformer(BaseTransformer):
         codebook_logits = self.fast_output(fast_out)
 
         return codebook_logits
+
+    def forward_generate(
+        self,
+        x: Tensor,
+        input_pos: Optional[Tensor] = None,
+        vq_masks: Optional[Tensor] = None,
+    ) -> TransformerForwardResult:
+        x = super().forward_generate(x, input_pos, vq_masks)
+        x.hidden_states = self.fast_project_in(x.hidden_states)
+        return x
 
 
 class TransformerBlock(nn.Module):
@@ -754,6 +848,17 @@ class RMSNorm(nn.Module):
 
 
 def precompute_freqs_cis(seq_len: int, n_elem: int, base: int = 10000) -> Tensor:
+    """
+    Precomputes frequency tensors for complex exponentials (cis)
+
+    Args:
+        seq_len: Length of the sequence for which positional embeddings are needed.
+        n_elem: Number of elements in the frequency tensor.
+        base: Base value for the frequency scaling (default: 10000).
+
+    Returns:
+        A tensor containing the precomputed frequencies in real and imaginary parts (bfloat16).
+    """
     freqs = 1.0 / (
         base ** (torch.arange(0, n_elem, 2)[: (n_elem // 2)].float() / n_elem)
     )

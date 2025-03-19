@@ -4,7 +4,7 @@ import string
 from fish_speech.text.clean import clean_text
 
 
-def utf_8_len(text):
+def utf_8_len(text: str):
     return len(text.encode("utf-8"))
 
 
@@ -71,9 +71,9 @@ def split_text(text, length):
 
     texts = [text]
     texts = map(protect_float, texts)
-    texts = break_text(texts, length, {".", "!", "?"})
+    texts = break_text(texts, length, {".", "!", "?", "。", "！", "？"})
     texts = map(unprotect_float, texts)
-    texts = break_text(texts, length, {","})
+    texts = break_text(texts, length, {",", "，"})
     texts = break_text(texts, length, {" "})
     texts = list(break_text_by_length(texts, length))
 

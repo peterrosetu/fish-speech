@@ -23,6 +23,9 @@
 
 データセットを上記の形式に変換し、「data」ディレクトリに配置する必要があります。音声ファイルの拡張子は「.mp3」、「.wav」、または「.flac」にすることができ、注釈ファイルの拡張子は「.lab」にする必要があります。
 
+!!! info
+     標準ファイル `.lab` には、音声の転写テキストのみを含め、特別なフォーマットは必要ありません。例えば、`hi.mp3` で「こんにちは、さようなら」と言っている場合、`hi.lab` ファイルには「こんにちは、さようなら」という一行のテキストを含めるだけです。
+
 !!! warning
     データセットにラウドネス正規化を適用することをお勧めします。これを行うには、[fish-audio-preprocess](https://github.com/fishaudio/audio-preprocess) を使用できます。
 
@@ -36,7 +39,7 @@
 VQGANの重みをダウンロードしたことを確認してください。まだダウンロードしていない場合は、次のコマンドを実行してください。
 
 ```bash
-huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/fish-speech-1.2-sft
+huggingface-cli download fishaudio/fish-speech-1.5 --local-dir checkpoints/fish-speech-1.5
 ```
 
 次に、次のコマンドを実行してセマンティックトークンを抽出できます。
@@ -45,7 +48,7 @@ huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/f
 python tools/vqgan/extract_vq.py data \
     --num-workers 1 --batch-size 16 \
     --config-name "firefly_gan_vq" \
-    --checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
+    --checkpoint-path "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
 ```
 
 !!! note
@@ -89,7 +92,7 @@ python tools/llama/build_dataset.py \
 同様に、`LLAMA`の重みをダウンロードしたことを確認してください。まだダウンロードしていない場合は、次のコマンドを実行してください。
 
 ```bash
-huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/fish-speech-1.2-sft
+huggingface-cli download fishaudio/fish-speech-1.5 --local-dir checkpoints/fish-speech-1.5
 ```
 
 最後に、次のコマンドを実行して微調整を開始できます。
@@ -106,7 +109,7 @@ python fish_speech/train.py --config-name text2semantic_finetune \
 !!! note
     Windowsユーザーの場合、`trainer.strategy.process_group_backend=gloo` を使用して `nccl` の問題を回避できます。
 
-トレーニングが完了したら、[推論](inference.md)セクションを参照し、`--speaker SPK1` を使用して音声を生成します。
+トレーニングが完了したら、[推論](inference.md)セクションを参照し、音声を生成します。
 
 !!! info
     デフォルトでは、モデルは話者の発話パターンのみを学習し、音色は学習しません。音色の安定性を確保するためにプロンプトを使用する必要があります。
@@ -117,9 +120,9 @@ python fish_speech/train.py --config-name text2semantic_finetune \
 ```bash
 python tools/llama/merge_lora.py \
 	--lora-config r_8_alpha_16 \
-	--base-weight checkpoints/fish-speech-1.2-sft \
+	--base-weight checkpoints/fish-speech-1.5 \
 	--lora-weight results/$project/checkpoints/step_000000010.ckpt \
-	--output checkpoints/fish-speech-1.2-sft-yth-lora/
+	--output checkpoints/fish-speech-1.5-yth-lora/
 ```
 !!! note
     他のチェックポイントを試すこともできます。要件を満たす最も早いチェックポイントを使用することをお勧めします。これらは通常、分布外（OOD）データでより良いパフォーマンスを発揮します。

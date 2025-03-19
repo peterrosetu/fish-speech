@@ -10,35 +10,41 @@ Suporte para inferência por linha de comando, API HTTP e interface web (WebUI).
     3. Dado um novo trecho de texto, fazer com que o modelo gere os tokens semânticos correspondentes.
     4. Inserir os tokens semânticos gerados no VITS / VQGAN para decodificar e gerar a voz correspondente.
 
-## Inferência por Linha de Comando
-
+## Baixar modelos
 Baixe os modelos `vqgan` e `llama` necessários do nosso repositório Hugging Face.
 
 ```bash
-huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/fish-speech-1.2-sft
+huggingface-cli download fishaudio/fish-speech-1.5 --local-dir checkpoints/fish-speech-1.5
 ```
 
+## Inferência por Linha de Comando
 ### 1. Gerar prompt a partir da voz:
 
 !!! note
     Se quiser permitir que o modelo escolha aleatoriamente um timbre de voz, pule esta etapa.
 
+!!! warning "Aviso de Versão Futura"
+    Mantivemos a interface acessível a partir do caminho original (tools/vqgan/infernce.py), mas esta interface poderá ser removida em algumas versões futuras. Por favor, altere o seu código o mais breve possível.
+
 ```bash
-python tools/vqgan/inference.py \
+python fish_speech/models/vqgan/inference.py \
     -i "paimon.wav" \
-    --checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
+    --checkpoint-path "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
 ```
 
 Você deverá obter um arquivo `fake.npy`.
 
 ### 2. Gerar tokens semânticos a partir do texto:
 
+!!! warning "Aviso de Versão Futura"
+    Mantivemos a interface acessível a partir do caminho original (tools/llama/generate.py), mas esta interface poderá ser removida em algumas versões futuras. Por favor, altere o seu código o mais breve possível.
+
 ```bash
-python tools/llama/generate.py \
+python fish_speech/models/text2semantic/inference.py \
     --text "O texto que você deseja converter" \
     --prompt-text "Seu texto de referência" \
     --prompt-tokens "fake.npy" \
-    --checkpoint-path "checkpoints/fish-speech-1.2-sft" \
+    --checkpoint-path "checkpoints/fish-speech-1.5" \
     --num-samples 2 \
     --compile
 ```
@@ -56,10 +62,13 @@ Este comando criará um arquivo `codes_N` no diretório de trabalho, onde N é u
 
 #### Decodificador VQGAN
 
+!!! warning "Aviso de Versão Futura"
+    Mantivemos a interface acessível a partir do caminho original (tools/vqgan/infernce.py), mas esta interface poderá ser removida em algumas versões futuras. Por favor, altere o seu código o mais breve possível.
+
 ```bash
-python tools/vqgan/inference.py \
+python fish_speech/models/vqgan/inference.py \
     -i "codes_0.npy" \
-    --checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
+    --checkpoint-path "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
 ```
 
 ## Inferência por API HTTP
@@ -67,21 +76,21 @@ python tools/vqgan/inference.py \
 Fornecemos uma API HTTP para inferência. O seguinte comando pode ser usado para iniciar o servidor:
 
 ```bash
-python -m tools.api \
+python -m tools.api_server \
     --listen 0.0.0.0:8080 \
-    --llama-checkpoint-path "checkpoints/fish-speech-1.2-sft" \
-    --decoder-checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth" \
+    --llama-checkpoint-path "checkpoints/fish-speech-1.5" \
+    --decoder-checkpoint-path "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth" \
     --decoder-config-name firefly_gan_vq
 ```
 
-Para acelerar a inferência, adicione o parâmetro `--compile`.
+> Para acelerar a inferência, adicione o parâmetro `--compile`.
 
 Depois disso, é possível visualizar e testar a API em http://127.0.0.1:8080/.
 
-Abaixo está um exemplo de envio de uma solicitação usando `tools/post_api.py`.
+Abaixo está um exemplo de envio de uma solicitação usando `tools/api_client.py`.
 
 ```bash
-python -m tools.post_api \
+python -m tools.api_client \
     --text "Texto a ser inserido" \
     --reference_audio "Caminho para o áudio de referência" \
     --reference_text "Conteúdo de texto do áudio de referência" \
@@ -90,63 +99,24 @@ python -m tools.post_api \
 
 O comando acima indica a síntese do áudio desejada de acordo com as informações do áudio de referência e a retorna em modo de streaming.
 
-Caso selecione, de forma aleatória, o áudio de referência com base em `{SPEAKER}` e `{EMOTION}`, o configure de acordo com as seguintes etapas:
-
-### 1. Crie uma pasta `ref_data` no diretório raiz do projeto.
-
-### 2. Crie uma estrutura de diretórios semelhante à seguinte dentro da pasta `ref_data`.
-
-```
-.
-├── SPEAKER1
-│    ├──EMOTION1
-│    │    ├── 21.15-26.44.lab
-│    │    ├── 21.15-26.44.wav
-│    │    ├── 27.51-29.98.lab
-│    │    ├── 27.51-29.98.wav
-│    │    ├── 30.1-32.71.lab
-│    │    └── 30.1-32.71.flac
-│    └──EMOTION2
-│         ├── 30.1-32.71.lab
-│         └── 30.1-32.71.mp3
-└── SPEAKER2
-    └─── EMOTION3
-          ├── 30.1-32.71.lab
-          └── 30.1-32.71.mp3
-```
-
-Ou seja, primeiro coloque as pastas `{SPEAKER}` em `ref_data`, depois coloque as pastas `{EMOTION}` em cada pasta de orador (speaker) e coloque qualquer número de `pares áudio-texto` em cada pasta de emoção.
-
-### 3. Digite o seguinte comando no ambiente virtual
-
-```bash
-python tools/gen_ref.py
-
-```
-
-### 4. Chame a API.
-
-```bash
-python -m tools.post_api \
-    --text "Texto a ser inserido" \
-    --speaker "${SPEAKER1}" \
-    --emotion "${EMOTION1}" \
-    --streaming True
-```
-
-O exemplo acima é apenas para fins de teste.
+!!! info
+    Para aprender mais sobre parâmetros disponíveis, você pode usar o comando `python -m tools.api_client -h`
 
 ## Inferência por WebUI
 
 Para iniciar a WebUI de Inferência execute o seguinte comando:
 
 ```bash
-python -m tools.webui \
-    --llama-checkpoint-path "checkpoints/fish-speech-1.2-sft" \
-    --decoder-checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth" \
+python -m tools.run_webui \
+    --llama-checkpoint-path "checkpoints/fish-speech-1.5" \
+    --decoder-checkpoint-path "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth" \
     --decoder-config-name firefly_gan_vq
 ```
+> Para acelerar a inferência, adicione o parâmetro `--compile`.
 
+!!! note
+    Você pode salvar antecipadamente o arquivo de rótulos e o arquivo de áudio de referência na pasta `references` do diretório principal (que você precisa criar), para que possa chamá-los diretamente na WebUI.
+    
 !!! note
     É possível usar variáveis de ambiente do Gradio, como `GRADIO_SHARE`, `GRADIO_SERVER_PORT`, `GRADIO_SERVER_NAME`, para configurar a WebUI.
 

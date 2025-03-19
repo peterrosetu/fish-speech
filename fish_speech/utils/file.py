@@ -1,5 +1,4 @@
 import os
-from glob import glob
 from pathlib import Path
 from typing import Union
 
@@ -19,10 +18,45 @@ AUDIO_EXTENSIONS = {
     ".aifc",
 }
 
+VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".avi",
+}
+
+
+def get_latest_checkpoint(path: Path | str) -> Path | None:
+    # Find the latest checkpoint
+    ckpt_dir = Path(path)
+
+    if ckpt_dir.exists() is False:
+        return None
+
+    ckpts = sorted(ckpt_dir.glob("*.ckpt"), key=os.path.getmtime)
+    if len(ckpts) == 0:
+        return None
+
+    return ckpts[-1]
+
+
+def audio_to_bytes(file_path):
+    if not file_path or not Path(file_path).exists():
+        return None
+    with open(file_path, "rb") as wav_file:
+        wav = wav_file.read()
+    return wav
+
+
+def read_ref_text(ref_text):
+    path = Path(ref_text)
+    if path.exists() and path.is_file():
+        with path.open("r", encoding="utf-8") as file:
+            return file.read()
+    return ref_text
+
 
 def list_files(
     path: Union[Path, str],
-    extensions: set[str] = None,
+    extensions: set[str] = set(),
     recursive: bool = False,
     sort: bool = True,
 ) -> list[Path]:
@@ -50,20 +84,6 @@ def list_files(
         files = natsorted(files)
 
     return files
-
-
-def get_latest_checkpoint(path: Path | str) -> Path | None:
-    # Find the latest checkpoint
-    ckpt_dir = Path(path)
-
-    if ckpt_dir.exists() is False:
-        return None
-
-    ckpts = sorted(ckpt_dir.glob("*.ckpt"), key=os.path.getmtime)
-    if len(ckpts) == 0:
-        return None
-
-    return ckpts[-1]
 
 
 def load_filelist(path: Path | str) -> list[tuple[Path, str, str, str]]:

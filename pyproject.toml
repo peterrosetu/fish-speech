@@ -8,13 +8,13 @@ description = "Fish Speech"
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["TTS", "Speech"]
-license = {text = "BSD-3-Clause"}
+license = {text = "CC BY-NC-SA 4.0"}
 classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
     "numpy<=1.26.4",
-    "transformers>=4.35.2",
+    "transformers>=4.45.2",
     "datasets==2.18.0",
     "lightning>=2.1.0",
     "hydra-core>=1.3.2",
@@ -23,32 +23,35 @@ dependencies = [
     "einops>=0.7.0",
     "librosa>=0.10.1",
     "rich>=13.5.3",
-    "gradio>=4.0.0",
+    "gradio>5.0.0",
     "wandb>=0.15.11",
     "grpcio>=1.58.0",
     "kui>=1.6.0",
     "uvicorn>=0.30.0",
     "loguru>=0.6.0",
     "loralib>=0.1.2",
-    "natsort>=8.4.0",
     "pyrootutils>=1.0.4",
-    "torch==2.3.1",
-    "vector_quantize_pytorch>=1.14.24",
+    "vector_quantize_pytorch==1.14.24",
     "resampy>=0.4.3",
     "einx[torch]==0.2.2",
     "zstandard>=0.22.0",
     "pydub",
+    "pyaudio",
     "faster_whisper",
-    "modelscope==1.16.1",
-    "funasr==1.1.2",
+    "modelscope==1.17.1",
+    "funasr==1.1.5",
     "opencc-python-reimplemented==0.1.7",
-    "torchaudio",
+    "silero-vad",
+    "ormsgpack",
+    "tiktoken>=0.8.0",
+    "pydantic==2.9.2",
+    "cachetools",
 ]
 
 [project.optional-dependencies]
-asr = [
-    "openai-whisper",
-    "modelscope"
+stable = [
+    "torch<=2.4.1",
+    "torchaudio",
 ]
 
 [build-system]
@@ -56,4 +59,4 @@ requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["fish_speech"]
+packages = ["fish_speech", "tools"]

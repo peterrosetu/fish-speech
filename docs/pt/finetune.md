@@ -23,6 +23,9 @@ Na atual versão, a única coisa que você precisa ajustar é a parte do 'LLAMA'
 
 Você precisa converter seu conjunto de dados para o formato acima e colocá-lo em `data`. O arquivo de áudio pode ter as extensões `.mp3`, `.wav` ou `.flac`, e o arquivo de anotação deve ter a extensão `.lab`.
 
+!!! info
+    O arquivo de anotação `.lab` deve conter apenas a transcrição do áudio, sem a necessidade de formatação especial. Por exemplo, se o arquivo `hi.mp3` disser "Olá, tchau", o arquivo `hi.lab` conterá uma única linha de texto: "Olá, tchau".
+
 !!! warning
     É recomendado aplicar normalização de volume ao conjunto de dados. Você pode usar o [fish-audio-preprocess](https://github.com/fishaudio/audio-preprocess) para fazer isso.
 
@@ -36,7 +39,7 @@ Você precisa converter seu conjunto de dados para o formato acima e colocá-lo 
 Certifique-se de ter baixado os pesos do VQGAN. Se não, execute o seguinte comando:
 
 ```bash
-huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/fish-speech-1.2-sft
+huggingface-cli download fishaudio/fish-speech-1.5 --local-dir checkpoints/fish-speech-1.5
 ```
 
 Em seguida, você pode executar o seguinte comando para extrair os tokens semânticos:
@@ -45,7 +48,7 @@ Em seguida, você pode executar o seguinte comando para extrair os tokens semân
 python tools/vqgan/extract_vq.py data \
     --num-workers 1 --batch-size 16 \
     --config-name "firefly_gan_vq" \
-    --checkpoint-path "checkpoints/fish-speech-1.2-sft/firefly-gan-vq-fsq-4x1024-42hz-generator.pth"
+    --checkpoint-path "checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
 ```
 
 !!! note
@@ -89,7 +92,7 @@ Após executar o comando, você deverá ver o arquivo `quantized-dataset-ft.prot
 Da mesma forma, certifique-se de ter baixado os pesos do `LLAMA`. Se não, execute o seguinte comando:
 
 ```bash
-huggingface-cli download fishaudio/fish-speech-1.2-sft --local-dir checkpoints/fish-speech-1.2-sft
+huggingface-cli download fishaudio/fish-speech-1.5 --local-dir checkpoints/fish-speech-1.5
 ```
 
 E então, execute o seguinte comando para iniciar o ajuste fino:
@@ -106,7 +109,7 @@ python fish_speech/train.py --config-name text2semantic_finetune \
 !!! note
     Para usuários do Windows, é recomendado usar `trainer.strategy.process_group_backend=gloo` para evitar problemas com `nccl`.
 
-Após concluir o treinamento, consulte a seção [inferência](inference.md), e use `--speaker SPK1` para gerar fala.
+Após concluir o treinamento, consulte a seção [inferência](inference.md).
 
 !!! info
     Por padrão, o modelo aprenderá apenas os padrões de fala do orador e não o timbre. Ainda pode ser preciso usar prompts para garantir a estabilidade do timbre.
@@ -117,9 +120,9 @@ Após o treinamento, é preciso converter os pesos do LoRA em pesos regulares an
 ```bash
 python tools/llama/merge_lora.py \
     --lora-config r_8_alpha_16 \
-    --base-weight checkpoints/fish-speech-1.2-sft \
+    --base-weight checkpoints/fish-speech-1.5 \
     --lora-weight results/$project/checkpoints/step_000000010.ckpt \
-    --output checkpoints/fish-speech-1.2-sft-yth-lora/
+    --output checkpoints/fish-speech-1.5-yth-lora/
 ```
 !!! note
     É possível também tentar outros checkpoints. Sugerimos usar o checkpoint que melhor atenda aos seus requisitos, pois eles geralmente têm um desempenho melhor em dados fora da distribuição (OOD).
