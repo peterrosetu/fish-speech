@@ -1,4 +1,4 @@
-site_name: OpenAudio
+site_name: Fish Audio
 site_description: Targeting SOTA TTS solutions.
 site_url: https://speech.fish.audio
 
@@ -12,7 +12,7 @@ copyright: Copyright &copy; 2023-2025 by Fish Audio
 
 theme:
   name: material
-  favicon: assets/openaudio.png
+  favicon: assets/logo.svg
   language: en
   features:
     - content.action.edit
@@ -25,7 +25,7 @@ theme:
     - search.highlight
     - search.share
     - content.code.copy
-  logo: assets/openaudio.png
+  logo: assets/logo.svg
 
   palette:
     # Palette toggle for automatic mode
@@ -68,7 +68,9 @@ plugins:
         - zh
         - ja
         - pt
+        - es
         - ko
+        - ar
   - i18n:
       docs_structure: folder
       languages:
@@ -97,6 +99,13 @@ plugins:
             - Introdução: pt/index.md
             - Instalação: pt/install.md
             - Inferência: pt/inference.md
+        - locale: es
+          name: Español
+          build: true
+          nav:
+            - Introducción: es/index.md
+            - Instalación: es/install.md
+            - Inferencia: es/inference.md
         - locale: ko
           name: 한국어
           build: true
@@ -104,6 +113,13 @@ plugins:
             - 소개: ko/index.md
             - 설치: ko/install.md
             - 추론: ko/inference.md
+        - locale: ar
+          name: العربية
+          build: true
+          nav:
+            - مقدمة: ar/index.md
+            - التثبيت: ar/install.md
+            - الاستنتاج: ar/inference.md
 
 markdown_extensions:
   - pymdownx.highlight:
